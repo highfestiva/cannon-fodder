@@ -4,7 +4,18 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 const bodyMeshMap = new Map();
 
-var freq = 5000;
+var attackPeriod = 5000;
+var shootTimer = undefined;
+const fire = {weapon:'pistol'};
+const weapons = {
+    'pistol': {speed:100, frequency:2, projectile:'sphere', size:0.1, mass:0.1},
+    'rifle': {speed:180, frequency:0.7, projectile:'sphere', size:0.4, mass:1, explosion:3},
+    'machine_gun': {speed:150, frequency:10, projectile:'sphere', size:0.3, mass:0.3},
+    'cannon': {speed:50, frequency:0.3, projectile:'box', size:[1,1,1], mass:3, explosion:20},
+    'laser': {frequency:150, projectile:'ray', explosion:0.5},
+};
+const poofBodies = [];
+
 
 // Set up Cannon.js
 const world = new CANNON.World();
@@ -14,7 +25,9 @@ world.gravity.set(0, 0, -9.82);
 // world.addContactMaterial(contact);
 
 // Set up Three.js
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+const near = 3;
+const far = 1000;
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, near, far);
 camera.position.set(0, -35, 10);
 camera.rotation.x += 3.14159265 / 2;
 
@@ -34,8 +47,8 @@ light.target.position.set(-1, 20, -4);
 light.castShadow = true;
 light.shadow.mapSize.width = 1024;
 light.shadow.mapSize.height = 1024;
-light.shadow.camera.near = 0.1;
-light.shadow.camera.far = 1000;
+light.shadow.camera.near = near;
+light.shadow.camera.far = far;
 light.shadow.camera.top = 55;
 light.shadow.camera.bottom = -55;
 light.shadow.camera.left = -55;
@@ -54,9 +67,12 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 document.addEventListener('mousedown', mouseDown, false);
+document.addEventListener('mouseup', mouseUp, false);
+document.addEventListener('mousemove', mouseMove, false);
+document.addEventListener('keydown', keyDown, false);
 
 
-function createBox(cInfo) {
+function createGeom(cInfo) {
     const pos = cInfo.pos ?? [0,0,0];
     const size = cInfo.size ?? [1,1,1];
     const vel = cInfo.vel;
@@ -64,9 +80,12 @@ function createBox(cInfo) {
     const mass = cInfo.mass ?? 1;
     const castShadow = cInfo.castShadow ?? false;
     const receiveShadow = cInfo.receiveShadow ?? false;
+    const shapeName = cInfo.shape ?? 'box';
+    const meta = cInfo.meta ?? 'plain';
+    const explosion = cInfo.explosion ?? 0;
 
     // Cannon.js
-    const shape = new CANNON.Box(new CANNON.Vec3(...size.map(x => x * 0.5)))
+    const shape = shapeName == 'box' ? new CANNON.Box(new CANNON.Vec3(...size.map(x => x * 0.5))) : new CANNON.Sphere(size);
     const body = new CANNON.Body({ mass: mass/*, material: material*/ });
     body.addShape(shape);
     body.position.set(...pos);
@@ -74,10 +93,15 @@ function createBox(cInfo) {
         body.velocity.set(...vel);
     }
     body.linearDamping = 0.05;
+    body.meta = meta
+    body.explosion = explosion;
+    if (explosion > 0 || meta == 'fizz') {
+        body.addEventListener('collide', onCollision);
+    }
     world.addBody(body);
 
     // Three.js
-    const geom = new THREE.BoxGeometry(...size);
+    const geom = shapeName == 'box' ? new THREE.BoxGeometry(...size) : new THREE.SphereGeometry(size);
     var mat = null;
     if (col !== undefined) {
         mat = new THREE.MeshPhongMaterial({color: col});
@@ -94,18 +118,25 @@ function createBox(cInfo) {
 }
 
 
+function createBox(cInfo) {
+    cInfo['shape'] = 'box';
+    return createGeom(cInfo);
+}
+
+
 function makeXYBox(x, y, width) {
     const w = width ? width : 1;
     const xf = width ? -1 : +1;
     createBox({pos:[x+xf*w/2, 0, y+0.5], size:[w, 1, 1], mass:w, castShadow:true, receiveShadow:true});
+    createBox({pos:[x+xf*w/2, 1, y+0.5], size:[w, 1, 1], mass:w, castShadow:true, receiveShadow:true});
 }
 
 
-createBox({pos:[0,0,-0.1], size:[100,100,0.2], col:0x666633, mass:0, receiveShadow:true});
+createBox({pos:[0,0,-5], size:[100,100,10], col:0x666633, mass:0, receiveShadow:true});
 createBox({pos:[-3,0,2], size:[4,4,4], col:0xbbbbbb, mass:0, castShadow:true, receiveShadow:true});
 
 
-const horse = `
+const castle = `
 X X X X X X
 XXXXXXXXXXX
 X====X====X
@@ -117,7 +148,7 @@ XXXX   XXXX
 XXXX   XXXX
 `.trim();
 
-const lines = horse.split(/\r?\n/)
+const lines = castle.split(/\r?\n/)
 
 
 for (var y = 0; y < lines.length; y++) {
@@ -139,16 +170,72 @@ for (var y = 0; y < lines.length; y++) {
     }
 }
 
-function mouseDown(evt) {
-    evt.preventDefault();
+function aim(evt) {
     var direction = new THREE.Vector3(
         (evt.clientX / window.innerWidth)*2 - 1,
       - (evt.clientY / window.innerHeight)*2 + 1,
         0.5
     );
     direction.unproject(camera);
-    direction.sub(camera.position).normalize().multiplyScalar(60);
-    createBox({pos:camera.position, vel:direction, mass:1, castShadow:true});
+    return direction.sub(camera.position).normalize();
+}
+
+function mouseDown(evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
+    fire['dir'] = aim(evt);
+    if (evt.button == 0) {
+        shoot();
+    }
+}
+
+function mouseUp(evt) {
+    clearTimeout(shootTimer);
+}
+
+function mouseMove(evt) {
+    fire['dir'] = aim(evt);
+}
+
+function keyDown(evt) {
+    if (evt.key == '1') {
+        fire.weapon = 'pistol';
+    } else if (evt.key == '2') {
+        fire.weapon = 'rifle';
+    } else if (evt.key == '3') {
+        fire.weapon = 'machine_gun';
+    } else if (evt.key == '4') {
+        fire.weapon = 'cannon';
+    } else if (evt.key == '5') {
+        fire.weapon = 'laser';
+    }
+}
+
+function shoot() {
+    const dir = fire['dir'];
+    const weaponType = fire.weapon;
+    const weapon = weapons[weaponType];
+    const speed = weapon.speed;
+    const freq = weapon.frequency;
+    if (weaponType == 'laser') {
+        var ray = new THREE.Raycaster(camera.position, dir);
+        const a = Array.from(bodyMeshMap.values())
+        ray.intersectObjects(a).forEach(intersection => {
+            for (const [body, mesh] of bodyMeshMap) {
+                if (mesh == intersection.object) {
+                    if (body.mass != 0) {
+                        dropThing(body, mesh);
+                    }
+                    break;
+                }
+            }
+        });
+    } else {
+        const direction = dir.clone().multiplyScalar(speed);
+        createGeom({pos:camera.position, size:weapon.size, vel:direction, mass:weapon.mass, castShadow:true, shape:weapon.projectile, explosion:weapon.explosion, meta:'bullet'});
+    }
+    clearTimeout(shootTimer);
+    shootTimer = setTimeout(shoot, 1000/freq);
 }
 
 function attack() {
@@ -161,13 +248,23 @@ function attack() {
         pos = [50, 0, 20];
         vel = [-20, 0, 5];
     }
-    createBox({pos:pos, vel:vel, mass:1, castShadow:true});
-    freq *= 0.9;
-    if (freq < 300) {
-        freq = 300;
+    createBox({pos:pos, vel:vel, mass:1, castShadow:true, meta:'attack'});
+    attackPeriod *= 0.9;
+    if (attackPeriod < 300) {
+        attackPeriod = 300;
     }
     var r = Math.max(Math.random(), 0.5);
-    setTimeout(attack, r*freq);
+    setTimeout(attack, r*attackPeriod);
+}
+
+
+function onCollision(evt) {
+    poofBodies.push(evt.target);
+}
+
+
+function createExplosion(pos, explosion) {
+    //world.findClosestThings...
 }
 
 function dropThing(body, mesh) {
@@ -189,6 +286,18 @@ function resize() {
 function animate() {
     requestAnimationFrame(animate);
     world.step(1 / 140);
+
+    while (poofBodies.length > 0) {
+        const body = poofBodies.pop();
+        const m = bodyMeshMap.get(body);
+        if (m === undefined) {
+            break;
+        }
+        dropThing(body, m);
+        if (body.explosion > 0) {
+            createExplosion(body.position, body.explosion);
+        }
+    }
 
     for (const [body, mesh] of bodyMeshMap) {
         if (body.position.z < -30) {
