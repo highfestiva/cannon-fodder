@@ -22,11 +22,13 @@ const explosiveFizzSpeed = 2;
 // Set up Cannon.js
 const world = new CANNON.World();
 world.gravity.set(0, 0, -9.82);
-// const material = new CANNON.Material();
-// const contact = new CANNON.ContactMaterial(material, material, { friction: 0.7, restitution: 0.8 });
-// world.addContactMaterial(contact);
+const material = new CANNON.Material();
+const contact = new CANNON.ContactMaterial(material, material, { friction: 0.2, restitution: 0.8 });
+world.addContactMaterial(contact);
 
 // Set up Three.js
+const clock = new THREE.Clock();
+var frameTime = 1 / 30;
 const near = 3;
 const far = 1000;
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, near, far);
@@ -88,7 +90,7 @@ function createGeom(cInfo) {
 
     // Cannon.js
     const shape = shapeName == 'box' ? new CANNON.Box(new CANNON.Vec3(...size.map(x => x * 0.5))) : new CANNON.Sphere(size);
-    const body = new CANNON.Body({ mass: mass/*, material: material*/ });
+    const body = new CANNON.Body({ mass: mass, material: material });
     body.addShape(shape);
     pos instanceof Array ? body.position.set(...pos) : body.position.copy(pos);
     if (vel !== undefined) {
@@ -204,6 +206,9 @@ function mouseUp(evt) {
 
 function mouseMove(evt) {
     fire['dir'] = aim(evt);
+    if (fire.weapon == 'lazer') {
+        shoot(); // moving is shooting
+    }
 }
 
 function keyDown(evt) {
@@ -288,7 +293,7 @@ function createExplosion(pos, vel, explosion) {
     for (var i = 0; i < 10*explosion; ++i) {
         const rnd = new CANNON.Vec3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
         const off = rnd.clone();
-        const fizzVel = rnd.scale(explosiveFizzSpeed * explosion).vadd(vel);
+        const fizzVel = rnd.scale(explosiveFizzSpeed * explosion).vadd(vel.scale(0.3));
         createSphere({pos:pos.vadd(off), size:0.1, vel:fizzVel, mass:0.1, meta:'fizz', col:0x333333});
     }
 }
@@ -311,7 +316,8 @@ function resize() {
 
 function animate() {
     requestAnimationFrame(animate);
-    world.step(1 / 140);
+    frameTime = frameTime*0.8 + clock.getDelta() * 0.2;
+    world.step(frameTime);
 
     while (poofBodies.length > 0) {
         const body = poofBodies.pop();
@@ -326,7 +332,10 @@ function animate() {
     }
 
     for (const [body, mesh] of bodyMeshMap) {
-        if (body.position.z < -30) {
+        if (body.position.z < -30 ||
+            body.position.z > 200 ||
+            Math.abs(body.position.x) > 200 ||
+            Math.abs(body.position.y) > 400) {
             dropThing(body, mesh);
             continue;
         }
