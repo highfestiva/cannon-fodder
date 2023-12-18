@@ -9,12 +9,13 @@ var shootTimer = undefined;
 const fire = {weapon:'pistol'};
 const weapons = {
     'pistol': {speed:100, frequency:2, projectile:'sphere', size:0.1, mass:0.1},
-    'rifle': {speed:180, frequency:0.7, projectile:'sphere', size:0.4, mass:1, explosion:3},
+    'rifle': {speed:180, frequency:0.7, projectile:'sphere', size:0.4, mass:1, explosion:2},
     'machine_gun': {speed:150, frequency:10, projectile:'sphere', size:0.3, mass:0.3},
-    'cannon': {speed:50, frequency:0.3, projectile:'box', size:[1,1,1], mass:3, explosion:20},
+    'cannon': {speed:50, frequency:0.3, projectile:'box', size:[1,1,1], mass:3, explosion:10},
     'laser': {frequency:150, projectile:'ray', explosion:0.5},
 };
 const poofBodies = [];
+const explosiveForceFactor = 200;
 
 
 // Set up Cannon.js
@@ -264,7 +265,17 @@ function onCollision(evt) {
 
 
 function createExplosion(pos, explosion) {
-    //world.findClosestThings...
+    for (const [body, mesh] of bodyMeshMap) {
+        if (body.mass <= 0) {
+            continue;
+        }
+        const dist = body.position.distanceTo(pos);
+        if (dist <= explosion) {
+            const push = (dist > 0.3) ? explosion / dist : explosion * 3;
+            const force = body.position.vsub(pos).scale(explosiveForceFactor * push);
+            body.applyForce(force, pos);
+        }
+    }
 }
 
 function dropThing(body, mesh) {
