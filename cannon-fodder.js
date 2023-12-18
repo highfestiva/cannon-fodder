@@ -15,7 +15,8 @@ const weapons = {
     'laser': {frequency:150, projectile:'ray', explosion:0.5},
 };
 const poofBodies = [];
-const explosiveForceFactor = 200;
+const explosivePushFactor = 200;
+const explosiveFizzSpeed = 2;
 
 
 // Set up Cannon.js
@@ -89,9 +90,9 @@ function createGeom(cInfo) {
     const shape = shapeName == 'box' ? new CANNON.Box(new CANNON.Vec3(...size.map(x => x * 0.5))) : new CANNON.Sphere(size);
     const body = new CANNON.Body({ mass: mass/*, material: material*/ });
     body.addShape(shape);
-    body.position.set(...pos);
+    pos instanceof Array ? body.position.set(...pos) : body.position.copy(pos);
     if (vel !== undefined) {
-        body.velocity.set(...vel);
+        vel instanceof Array ? body.velocity.set(...vel) : body.velocity.copy(vel);
     }
     body.linearDamping = 0.05;
     body.meta = meta
@@ -121,6 +122,13 @@ function createGeom(cInfo) {
 
 function createBox(cInfo) {
     cInfo['shape'] = 'box';
+    return createGeom(cInfo);
+}
+
+
+function createSphere(cInfo) {
+    cInfo['shape'] = 'sphere';
+    cInfo['size'] = cInfo.size ?? 1;
     return createGeom(cInfo);
 }
 
@@ -264,7 +272,7 @@ function onCollision(evt) {
 }
 
 
-function createExplosion(pos, explosion) {
+function createExplosion(pos, vel, explosion) {
     for (const [body, mesh] of bodyMeshMap) {
         if (body.mass <= 0) {
             continue;
@@ -272,9 +280,16 @@ function createExplosion(pos, explosion) {
         const dist = body.position.distanceTo(pos);
         if (dist <= explosion) {
             const push = (dist > 0.3) ? explosion / dist : explosion * 3;
-            const force = body.position.vsub(pos).scale(explosiveForceFactor * push);
+            const force = body.position.vsub(pos).scale(explosivePushFactor * push);
             body.applyForce(force, pos);
         }
+    }
+    // generate fizz
+    for (var i = 0; i < 10*explosion; ++i) {
+        const rnd = new CANNON.Vec3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
+        const off = rnd.clone();
+        const fizzVel = rnd.scale(explosiveFizzSpeed * explosion).vadd(vel);
+        createSphere({pos:pos.vadd(off), size:0.1, vel:fizzVel, mass:0.1, meta:'fizz', col:0x333333});
     }
 }
 
@@ -306,7 +321,7 @@ function animate() {
         }
         dropThing(body, m);
         if (body.explosion > 0) {
-            createExplosion(body.position, body.explosion);
+            createExplosion(body.position, body.velocity, body.explosion);
         }
     }
 
