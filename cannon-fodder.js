@@ -89,7 +89,22 @@ function createGeom(cInfo) {
     const explosion = cInfo.explosion ?? 0;
 
     // Cannon.js
-    const shape = shapeName == 'box' ? new CANNON.Box(new CANNON.Vec3(...size.map(x => x * 0.5))) : new CANNON.Sphere(size);
+    var shape = null;
+    var geom = null;
+    switch (shapeName) {
+        case 'box':
+            shape = new CANNON.Box(new CANNON.Vec3(...size.map(x => x * 0.5)));
+            geom = new THREE.BoxGeometry(...size);
+            break;
+        case 'sphere':
+            shape = new CANNON.Sphere(size);
+            geom = new THREE.SphereGeometry(size);
+            break;
+        case 'cylinder':
+            shape = new CANNON.Cylinder(size[0], size[0], size[1], 14);
+            geom = new THREE.CylinderGeometry(size[0], size[0], size[1], 28);
+            break;
+    }
     const body = new CANNON.Body({ mass: mass, material: material });
     body.addShape(shape);
     pos instanceof Array ? body.position.set(...pos) : body.position.copy(pos);
@@ -105,17 +120,17 @@ function createGeom(cInfo) {
     world.addBody(body);
 
     // Three.js
-    const geom = shapeName == 'box' ? new THREE.BoxGeometry(...size) : new THREE.SphereGeometry(size);
     var mat = null;
     if (col !== undefined) {
         mat = new THREE.MeshPhongMaterial({color: col});
-    } else {//if (Math.random() > 0.5) {
+    } else {
         mat = new THREE.MeshPhongMaterial({color: Math.floor(Math.random() * 0xffffff)});
     }
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(body.position);
     mesh.castShadow = castShadow;
     mesh.receiveShadow = receiveShadow;
+    mesh.shapeName = shapeName;
     scene.add(mesh);
 
     bodyMeshMap.set(body, mesh);
@@ -131,6 +146,13 @@ function createBox(cInfo) {
 function createSphere(cInfo) {
     cInfo['shape'] = 'sphere';
     cInfo['size'] = cInfo.size ?? 1;
+    return createGeom(cInfo);
+}
+
+
+function createCylinder(cInfo) {
+    cInfo['shape'] = 'cylinder';
+    cInfo['size'] = cInfo.size ?? [1, 3];
     return createGeom(cInfo);
 }
 
@@ -262,7 +284,7 @@ function attack() {
         pos = [50, 0, 20];
         vel = [-20, 0, 5];
     }
-    createBox({pos:pos, vel:vel, mass:1, castShadow:true, meta:'attack'});
+    createCylinder({pos:pos, vel:vel, mass:1, castShadow:true, meta:'attack'});
     attackPeriod *= 0.9;
     if (attackPeriod < 300) {
         attackPeriod = 300;
@@ -331,6 +353,8 @@ function animate() {
         }
     }
 
+    const rotation = new THREE.Quaternion();
+    rotation.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
     for (const [body, mesh] of bodyMeshMap) {
         if (body.position.z < -30 ||
             body.position.z > 200 ||
@@ -341,6 +365,9 @@ function animate() {
         }
         mesh.position.copy(body.position);
         mesh.quaternion.copy(body.quaternion);
+        if (mesh.shapeName == 'cylinder') {
+            mesh.quaternion.multiply(rotation);
+        }
     }
 
     renderer.render(scene, camera);
